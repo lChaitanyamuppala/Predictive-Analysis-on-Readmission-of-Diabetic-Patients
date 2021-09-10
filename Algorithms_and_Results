@@ -1,0 +1,393 @@
+# DATA SPLIT --------------------------------------------------------------
+#Split data 
+set.seed(575)
+nr <- nrow(dbds)
+dbdsSplit <- sample(1:nr, size = round(0.7*nr), replace=FALSE) #70/30 we are sampling
+dbds_Trn <- dbds[dbdsSplit, ]#training data set
+dbds_Tst <- dbds[-dbdsSplit, ] #whatever is not in the training is in the testing
+
+# # #Under/Over sample
+# library(ROSE)
+# dbds_Trn <- ovun.sample(readmitted~., data=as.data.frame(dbds_Trn), na.action = na.pass, method = "both", p=0.5)$data
+# dbds_Trn %>% group_by(readmitted) %>% count()
+
+
+
+# LOGISTIC REGRESSION ----------------------------------------------------
+library(caret)
+
+#All variables
+readmission_glm <- glm(readmitted~., family = binomial(link = "logit"), data = dbds_Trn)
+summary(readmission_glm)
+
+#Train Confusion Matrix
+readmit <- predict(readmission_glm, dbds_Trn, type = "response")
+tb <- table(readmit>0.5, dbds_Trn$readmitted)
+dimnames(tb)[[1]] = c("0","1")
+confusionMatrix(tb)
+#Test Confusion Matrix
+readmit <- predict(readmission_glm, dbds_Tst, type = "response")
+tb <- table(readmit>0.5, dbds_Tst$readmitted)
+dimnames(tb)[[1]] = c("0","1")
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"]
+#AUC
+library(pROC)
+logit_roc <- roc(dbds_Tst$readmitted~readmit)
+plot(logit_roc, main="Logistic Roc Curve", legacy.axes = TRUE)
+
+#Coefficients
+View(exp(coef(readmission_glm)))
+
+predicted.test <- data.frame(
+  probability.of.readmitted=readmission_glm$fitted.values,
+  dbds_Trn$readmitted)
+
+predicted.test <- predicted.test[
+  order(predicted.test$probability.of.readmitted, decreasing=FALSE),]
+
+predicted.test$rank <- 1:nrow(predicted.test)
+
+# ## Lastly, we can plot the predicted probabilities for each sample having
+# ggplot(data=predicted.test, aes(x=rank, y=probability.of.readmitted)) +
+#   geom_point(aes(color=dbds_Trn$readmitted), alpha=1, shape=4, stroke=2) +
+#   xlab("Index") +
+#   ylab("Predicted Probability of Readmission")+ theme(text = element_text(size = 7))
+
+
+# # Demographics
+# glmdem <- glm(readmitted~ race + gender + age, family = binomial, data = dbds_Trn)
+# summary(glmdem)
+# #Train Confusion Matrix
+# predreadmit <- predict(glmdem, dbds_Trn, type = "response")
+# tb <- table(predreadmit>0.5, dbds_Trn$readmitted)
+# dimnames(tb)[[1]] = c("0","1")
+# confusionMatrix(tb)
+# #Test Confusion Matrix
+# predreadmit <- predict(glmdem, dbds_Tst, type = "response")
+# tb <- table(predreadmit>0.5, dbds_Tst$readmitted)
+# dimnames(tb)[[1]] = c("0","1")
+# confusionMatrix(tb)
+# #F1 score
+# cm$byClass["F1"]
+# 
+# # Hospital Readmission
+# glmhos <- glm(readmitted~ time_in_hospital + as.numeric(medical_specialty) + num_lab_procedures + num_procedures + num_medications + 
+#                  number_outpatient + number_emergency + number_inpatient + diag_1 + diag_2 + diag_3 + number_diagnoses, 
+#               family = binomial, data = dbds_Trn)
+# summary(glmhos)
+# #Train Confusion Matrix
+# predhos <- predict(glmhos, dbds_Trn, type = "response")
+# tb <- table(predhos>0.5, dbds_Trn$readmitted)
+# dimnames(tb)[[1]] = c("0","1")
+# confusionMatrix(tb)
+# #Test Confusion Matrix
+# predhos <- predict(glmhos, dbds_Tst, type = "response")
+# tb <- table(predhos>0.5, dbds_Tst$readmitted)
+# dimnames(tb)[[1]] = c("0","1")
+# confusionMatrix(tb)
+# #F1 score
+# cm$byClass["F1"]
+
+# KNN ---------------------------------------------------------------------
+#Convert int to numeric in order to normalize
+dbds_Trn <- dbds_Trn %>% mutate_if(is.integer, as.numeric)
+dbds_Tst <- dbds_Tst %>% mutate_if(is.integer, as.numeric)
+#Convert factor to numeric
+dbds_Trn <- dbds_Trn %>% mutate_if(is.factor, as.numeric)
+dbds_Tst <- dbds_Tst %>% mutate_if(is.factor, as.numeric)
+
+#Normalization
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x))) }
+dbds_Trn <- dbds_Trn %>% mutate_at(vars(c(8,9,11,15:17)), normalize)
+dbds_Tst <- dbds_Tst %>% mutate_at(vars(c(8,9,11,15:17)), normalize)
+
+#KNN Model, k=320
+dbds_knn320 <- knn(train=dbds_Trn[-c(21)], test=dbds_Tst[-c(21)], cl=dbds_Trn$readmitted, k=320)
+#Confusion Matrix
+tb <- table(dbds_knn320, dbds_Tst$readmitted)
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"]
+#AUC
+library(pROC)
+roc320 <- roc(dbds_Tst$readmitted, as.numeric(dbds_knn320))
+
+#KNN Model, k=100
+dbds_knn100 <- knn(train=dbds_Trn[-c(21)], test=dbds_Tst[-c(21)], cl=dbds_Trn$readmitted, k=100)
+#Confusion Matrix
+tb <- table(dbds_knn100, dbds_Tst$readmitted)
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"]
+#AUC
+roc100 <- roc(dbds_Tst$readmitted, as.numeric(dbds_knn100))
+
+#KNN Model, k=200
+dbds_knn200 <- knn(train=dbds_Trn[-c(21)], test=dbds_Tst[-c(21)], cl=dbds_Trn$readmitted, k=200)
+#Confusion Matrix
+tb <- table(dbds_knn200, dbds_Tst$readmitted)
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"]
+#AUC
+roc200 <- roc(dbds_Tst$readmitted, as.numeric(dbds_knn200))
+
+#KNN Model, k=300
+dbds_knn300 <- knn(train=dbds_Trn[-c(21)], test=dbds_Tst[-c(21)], cl=dbds_Trn$readmitted, k=300)
+#Confusion Matrix
+tb <- table(dbds_knn300, dbds_Tst$readmitted)
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"]
+#AUC
+roc300 <- roc(dbds_Tst$readmitted, as.numeric(dbds_knn300))
+
+#KNN Model, k=400
+dbds_knn400 <- knn(train=dbds_Trn[-c(21)], test=dbds_Tst[-c(21)], cl=dbds_Trn$readmitted, k=400)
+#Confusion Matrix
+tb <- table(dbds_knn400, dbds_Tst$readmitted)
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"]
+#AUC
+roc400 <- roc(dbds_Tst$readmitted, as.numeric(dbds_knn400))
+
+#Test ROC Curves
+plot(roc320, main="KNN ROC Curves")
+plot(roc100, add=TRUE, col="blue")
+plot(roc200, add=TRUE, col="red")
+plot(roc300, add=TRUE, col="green")
+plot(roc400, add=TRUE, col="yellow")
+legend("bottomright", legend=c("k=320", "k=100", "k=200", "k=300", "k=400"), col=c(par("fg"), "blue", "red", "green", "yellow"), lwd=2)
+
+# SVM ---------------------------------------------------------------------
+#Use normalized train and test from KNN
+
+#IF RUNNING ON SUBSET, START HERE: 
+#Try svm on subset of code
+dbds2 <- dbds[sample(1:nrow(dbds), 10000, replace=FALSE),]
+set.seed(575)
+nr <- nrow(dbds2)
+dbdsSplit <- sample(1:nr, size = round(0.7*nr), replace=FALSE) #70/30 we are sampling
+dbds_Trn <- dbds2[dbdsSplit, ]#training data set
+dbds_Tst <- dbds2[-dbdsSplit, ] #whatever is not in the training is in the testing
+#Convert int to numeric in order to normalize
+dbds_Trn <- dbds_Trn %>% mutate_if(is.integer, as.numeric)
+dbds_Tst <- dbds_Tst %>% mutate_if(is.integer, as.numeric)
+#Convert factor to numeric
+dbds_Trn <- dbds_Trn %>% mutate_if(is.factor, as.numeric)
+dbds_Tst <- dbds_Tst %>% mutate_if(is.factor, as.numeric)
+#Normalization
+normalize <- function(x) {
+  return ((x - min(x)) / (max(x) - min(x))) }
+dbds_Trn <- dbds_Trn %>% mutate_at(vars(c(8,9,11,15:17)), normalize)
+dbds_Tst <- dbds_Tst %>% mutate_at(vars(c(8,9,11,15:17)), normalize)
+
+#IF RUNNING ON FULL DATA, START HERE:
+#SVM tune
+library(e1071)
+tune_out <- tune(svm, factor(readmitted) ~., data=dbds_Trn, kernel="linear", cost = 2^(-3:3))
+summary(tune_out )
+tune_out$best.model$cost
+tune_out$best.performance
+
+#SVM 
+svm.model <- svm(readmitted ~ ., data = dbds_Trn, type="C-classification", kernel="linear", cost = 0.01, cross=10)
+
+#Train Confusion Matrix
+svm.pred <- predict(svm.model, dbds_Trn[,-21])
+tb <- table(pred = svm.pred, true = dbds_Trn$readmitted)
+library(caret)
+confusionMatrix(tb)
+#Test Confusion Matrix
+svm.pred <- predict(svm.model, dbds_Trn[,-21])
+tb <- table(pred = svm.pred, true = dbds_Trn$readmitted)
+library(caret)
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"]
+#AUC
+svm_roc<- roc(dbds_Trn$readmitted~as.numeric(svm.pred))
+plot(svm_roc, legacy.axes = TRUE)
+
+# GLM ---------------------------------------------------------------------
+#Ridge Regression
+library(glmnet)
+library(caret)
+library(ROCR)
+
+set.seed(575)
+glmnet_ridge <- cv.glmnet(data.matrix(dbds_Trn[,-21]),
+                          dbds_Trn$readmitted,
+                          family="binomial",
+                          type.measure = "auc",
+                          nfolds = 5,
+                          alpha=0)
+# predictions on train
+glmnet_ridge_train_pred <- predict(glmnet_ridge, data.matrix(dbds_Trn[,-21]),
+                                   s=glmnet_ridge$lambda.1se, type="class")
+glmnet_ridge_train_pred <- factor(glmnet_ridge_train_pred)
+confusionMatrix ( glmnet_ridge_train_pred,  as.factor(dbds_Trn$readmitted))
+#Predictions on Test
+glmnet_ridge_test_pred <- predict(glmnet_ridge, data.matrix(dbds_Tst[,-21]),
+                                  s=glmnet_ridge$lambda.1se,type="class")
+glmnet_ridge_test_pred <- factor(glmnet_ridge_test_pred)
+cmr <- confusionMatrix ( glmnet_ridge_test_pred,  as.factor(dbds_Tst$readmitted))
+cmr
+#F1 score
+cmr$byClass["F1"]
+
+# Lasso
+set.seed(575)
+glmnet_lasso <- cv.glmnet(data.matrix(dbds_Trn[,-21]),
+                          dbds_Trn$readmitted,
+                          family="binomial",
+                          type.measure = "auc",
+                          nfolds = 5,
+                          alpha=1)
+#Predictions on Train
+glmnet_lasso_train_pred <- predict(glmnet_lasso, data.matrix(dbds_Trn[,-21]),
+                                   s=glmnet_lasso$lambda.1se,type="class")
+glmnet_lasso_train_pred <- factor(glmnet_lasso_train_pred)
+confusionMatrix ( glmnet_lasso_train_pred,  as.factor(dbds_Trn$readmitted))
+# Predictions on Test
+glmnet_lasso_test_pred <- predict(glmnet_lasso, data.matrix(dbds_Tst[,-21]),
+                                  s=glmnet_lasso$lambda.1se,type="class")
+glmnet_lasso_test_pred <- factor(glmnet_lasso_test_pred)
+cml <- confusionMatrix ( glmnet_lasso_test_pred,  as.factor(dbds_Tst$readmitted))
+cml
+#F1 score
+cml$byClass["F1"]
+
+# Tuned model
+set.seed(575)
+glmnet_final <- train(x = data.matrix(dbds_Trn[,-21]), 
+                      y = factor(make.names(dbds_Trn$readmitted)),
+                      family = "binomial",
+                      metric="ROC",
+                      tuneLength = 20,
+                      trControl = trainControl(method="cv", 
+                                               number = 5, 
+                                               verboseIter = T, 
+                                               classProbs = TRUE, 
+                                               summaryFunction = twoClassSummary,
+                                               savePredictions = T),
+                      method = "glmnet")
+
+plot(glmnet_final)
+glmnet_final$results %>% 
+  as_tibble %>%  
+  arrange(desc(ROC)) %>% head(20)
+
+#Predictions on Train
+glmnet_predictions_trn2 <- predict(glmnet_final,newdata = data.matrix(dbds_Trn[,-21]))
+dbds_train_y_name <- factor(make.names(dbds_Trn$readmitted))
+confusionMatrix(glmnet_predictions_trn2,dbds_train_y_name)
+#Predictions on Test
+glmnet_predictions2 <- predict(glmnet_final,newdata = data.matrix(dbds_Tst[,-21]))
+dbds_test_y_name <- factor(make.names(dbds_Tst$readmitted))
+cmt <- confusionMatrix(glmnet_predictions2,dbds_test_y_name)
+cmt
+#F1 score
+cmt$byClass["F1"]
+
+plot(varImp(glmnet_final, scale = FALSE), top = 10, main = "glmnet")
+
+########AUC on Tuned model
+glmnet_scoretst_tuned=predict(glmnet_final, data.matrix(dbds_Tst[,-21]), type="prob")
+glmnet_predtst_tuned=prediction(glmnet_scoretst_tuned[,2], dbds_test_y_name)
+tunedperf <-performance(glmnet_predtst_tuned, "tpr", "fpr")
+plot(tunedperf)
+abline(a=0, b= 1)
+auc.tuned=performance(glmnet_predtst_tuned, "auc")
+auc.tuned@y.values 
+
+glmnet_roc <- roc(dbds_Tst$readmitted~glmnet_scoretst_tuned[,2])
+
+#########ridgeAUC
+glmnet_scoretst_ridge=predict(glmnet_ridge, data.matrix(dbds_Tst[,-21]))
+glmnet_predtst_ridge=prediction(glmnet_scoretst_ridge, dbds_test_y_name)
+ridgeperf <-performance(glmnet_predtst_ridge, "tpr", "fpr")
+plot(ridgeperf)
+abline(a=0, b= 1)
+auc.ridge=performance(glmnet_predtst_ridge, "auc")
+auc.ridge@y.values 
+
+##########LassoAUC
+glmnet_scoretst_lasso=predict(glmnet_lasso, data.matrix(dbds_Tst[,-21]))
+glmnet_predtst_lasso=prediction(glmnet_scoretst_lasso, dbds_test_y_name)
+lassoperf <-performance(glmnet_predtst_lasso, "fpr", "tpr")
+plot(lassoperf)
+abline(a=0, b= 1)
+auc.lasso=performance(glmnet_predtst_lasso, "auc")
+auc.lasso@y.values 
+
+#Test ROC Curves
+plot(ridgeperf, legacy.axes = TRUE)
+plot(lassoperf, add=TRUE, col="blue")
+plot(tunedperf, add=TRUE, col="red")
+abline(a=0,b=1)
+legend("bottomright", legend=c("Ridge", "Lasso", "Elastic"),col=c(par("fg"), "blue", "red"), lwd=2)
+
+# NAIVE BAYES -------------------------------------------------------------
+library(e1071)
+dbds_nb<-naiveBayes(readmitted ~ ., data=dbds_Trn)
+
+NBpredTrn<-predict(dbds_nb, dbds_Trn, type = "raw") 
+NBpredTst<-predict(dbds_nb, dbds_Tst, type = "raw")
+
+table(NBpredTrn[,2]>0.5, dbds_Trn$readmitted) 
+tb <- table(NBpredTst[,2]>0.5, dbds_Tst$readmitted) 
+dimnames(tb)[[1]] = c("0","1")
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"] 
+#ROC
+naive_roc <- roc(dbds_Tst$readmitted~NBpredTst[,2])
+plot(naive_roc)
+
+auc(as.numeric(dbds_Trn$readmitted), NBpredTrn[,2]) #Area under the curve: 
+auc(as.numeric(dbds_Tst$readmitted), NBpredTst[,2]) #Area under the curve: 
+
+#Using Laplace and Bernoulli
+dbds_nb<-naiveBayes(readmitted ~ ., data=dbds_Trn, laplace = 1, family = "bernoulli")
+
+NBpredTrn2<-predict(dbds_nb, dbds_Trn, type = "raw") 
+NBpredTst2<-predict(dbds_nb, dbds_Tst, type = "raw") 
+
+table(NBpredTrn2[,2]>0.5, dbds_Trn$readmitted) #0.5989528
+(8402)/(3987+8402)
+(34265)/(34265+24582)
+(2* 8402)/((2* 8402)+24582+3987)
+tb <- table(NBpredTst2[,2]>0.5, dbds_Tst$readmitted) #0.6008844
+(3523)/(1790+3523)
+(14822)/(14822+10395)
+(2* 3523)/((2* 3523)+10395+1790)
+dimnames(tb)[[1]] = c("0","1")
+cm <- confusionMatrix(tb)
+#F1 score
+cm$byClass["F1"] 
+
+auc(as.numeric(dbds_Trn2$readmitted), NBpredTrn2[,2]) #0.6525
+auc(as.numeric(dbds_Tst2$readmitted), NBpredTst2[,2]) #0.6516
+
+laplace_roc <- roc(dbds_Tst$readmitted~NBpredTst2[,2])
+
+#ROC Curve
+plot(naive_roc, legacy.axes = TRUE)
+plot(laplace_roc, add=TRUE, col="blue")
+legend("bottomright", legend=c("Naive", "Laplace"), col=c(par("fg"), "blue"), lwd=1)
+
+# MODEL ROC ---------------------------------------------------------------
+#Test ROC Curves
+plot(logit_roc, main="ROC Curves", legacy.axes = TRUE)
+plot(roc200, add=TRUE, col="blue")
+plot(glmnet_roc, add=TRUE, col="red")
+plot(naive_roc, add=TRUE, col="green")
+plot(svm_roc, add=TRUE, col="yellow")
+legend("bottomright", legend=c("Logit", "KNN", "GLM", "Naive Bayes", "SVM"), col=c(par("fg"), "blue", "red", "green", "yellow"), lwd=1)
+
+
