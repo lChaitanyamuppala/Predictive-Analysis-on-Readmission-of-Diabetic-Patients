@@ -4,3 +4,5 @@ In this project, we will assess how management of diabetes during these hospital
 the probability of readmission. Specifically, we will use variables such as A1C measurement,
 demographics, severity and type of disease, admission type, and medication to predict whether a
 diabetic patient will be readmitted to the hospital.
+
+Dataset: For this project, we got the dataset from UCI Repository.
