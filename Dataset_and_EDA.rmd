@@ -1,1 +1,264 @@
+rm(list=ls())  
 
+library(tidyverse)
+library(lubridate)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(class)
+
+# DATA LOAD ---------------------------------------------------------------
+#The missing values in our dataset has ? values so replacing them with NA
+na_strings <- "?"
+
+#Read data and replace values
+dbds <- read.csv('~/diabetic_data.csv', na = na_strings, header = TRUE)
+str(dbds)
+
+# DATA CLEANING ---------------------------------------------------------------
+#Drop these because it is not important for model
+dbds <- dbds %>% select(- matches("encounter_id"))
+dbds <- dbds %>% select(- matches("patient_nbr"))
+dbds <- dbds %>% select(- matches("payer_code"))
+
+#Drop because they are skewed and will create bias
+dbds <- select (dbds,-c("repaglinide", "nateglinide", "chlorpropamide", "glimepiride", "acetohexamide", "tolbutamide","pioglitazone","rosiglitazone", 
+                        "acarbose", "miglitol", "troglitazone", "tolazamide", "examide", "citoglipton", "glyburide.metformin", "glipizide.metformin",
+                        "glimepiride.pioglitazone", "metformin.rosiglitazone", "metformin.pioglitazone",))
+
+#Null values
+#Count number of columns with no null values.
+length(names(dbds)[colMeans(is.na(dbds))==0]) #22
+#Identify those columns:
+toString(names(dbds)[colMeans(is.na(dbds))==0])
+
+#Count number of columns with all null values.
+length(names(dbds)[colMeans(is.na(dbds))==1]) #0
+#Identify those columns:
+#toString(names(dbds)[colMeans(is.na(dbds))==1])
+#Drop vars with all empty values
+#dbds <- dbds %>% select_if(function(x){!all(is.na(x))})
+
+#Missing values
+#Check columns with 50% missing values
+length(names(dbds)[colMeans(is.na(dbds))>0.5]) #1
+toString(names(dbds)[colMeans(is.na(dbds))>0.5]) 
+#Drop vars with 50% missing values 
+dbds <- dbds %>% select(- matches("weight"))
+
+#missing value proportions in each column
+colMeans(is.na(dbds))
+# Get only those columns where there are missing values, 
+colMeans(is.na(dbds))[colMeans(is.na(dbds))>0]
+
+#Medical specialty has 49% missing values, We think it is necessary for our analysis so replacing NA values with missing
+unique(dbds$medical_specialty)
+dbds$medical_specialty <- as.character(dbds$medical_specialty)
+dbds$medical_specialty[is.na(dbds$medical_specialty)] <- "Missing"
+colMeans(is.na(dbds))[colMeans(is.na(dbds))>0]
+dbds$medical_specialty <- as.factor(dbds$medical_specialty)
+
+#Bin medical specialty into categories
+dbds$medical_specialty <- as.character(dbds$medical_specialty)
+other <- !(dbds$medical_specialty %in% c("Missing", "InternalMedicine", "Emergency/Trauma", "Family/GeneralPractice", "Cardiology", "Surgery-General", "Nephrology", "Orthopedics", 
+                                         "Orthopedics-Reconstructive", "Radiologist"))
+#Replace all specialties not in top 10 with other
+dbds$medical_specialty[other] <- "Other"
+dbds$medical_specialty <- as.factor(dbds$medical_specialty)
+
+#Treat missing values in race - Replace with most frequent value
+dbds %>% group_by(race) %>% count() #Most frequent value is Caucasian 
+dbds$race[is.na(dbds$race)] <- "Caucasian"
+
+# #Recode max_glu_serum
+# dbds$max_glu_serum <- as.character(dbds$max_glu_serum)
+# dbds$max_glu_serum[dbds$max_glu_serum ==">200"] <- "High"
+# dbds$max_glu_serum[dbds$max_glu_serum ==">300"] <- "High"
+# dbds %>% group_by(max_glu_serum) %>% count()
+# dbds$max_glu_serum <- as.factor(dbds$max_glu_serum)
+# 
+# #Recode A1Cresult
+# dbds$A1Cresult <- as.character(dbds$A1Cresult)
+# dbds$A1Cresult[dbds$A1Cresult ==">7"] <- "High"
+# dbds$A1Cresult[dbds$A1Cresult ==">8"] <- "High"
+# dbds %>% group_by(A1Cresult) %>% count()
+# dbds$A1Cresult <- as.factor(dbds$A1Cresult)
+
+#Treat missing values in diag_1 - Replace with median
+dbds <- dbds %>% mutate(diag_1=as.numeric(diag_1))
+dbds <- dbds %>% mutate_at(c('diag_1'), ~replace_na(., median(., na.rm=TRUE)))
+#Treat missing values in diag_2 - Replace with median
+dbds <- dbds %>% mutate(diag_2=as.numeric(diag_2))
+dbds <- dbds %>% mutate_at(c('diag_2'), ~replace_na(., median(., na.rm=TRUE)))
+#Treat missing values in diag_3 - Replace with median
+dbds <- dbds %>% mutate(diag_3=as.numeric(diag_3))
+dbds <- dbds %>% mutate_at(c('diag_3'), ~replace_na(., median(., na.rm=TRUE)))
+
+#diagnosis1
+dbds$diagnosis_1 <- factor( rep("other",nrow(dbds)),ordered = F, 
+                                 levels = c("Circulatory","Respiratory","Digestive","Diabetes","Injury",
+                                            "Musculoskeletal","Genitourinary","Neoplasms","Other"))
+dbds$diagnosis_1[dbds$diag_1>=390 & dbds$diag_1 <= 459 | dbds$diag_1==785] <- "Circulatory"
+dbds$diagnosis_1[dbds$diag_1>=460 & dbds$diag_1 <= 519 | dbds$diag_1==786] <- "Respiratory"
+dbds$diagnosis_1[dbds$diag_1>=520 & dbds$diag_1 <= 579 | dbds$diag_1==787] <- "Digestive"
+dbds$diagnosis_1[dbds$diag_1>=250 & dbds$diag_1 < 251] <- "Diabetes"
+dbds$diagnosis_1[dbds$diag_1>800 & dbds$diag_1 <= 999] <- "Injury"
+dbds$diagnosis_1[dbds$diag_1>=710 & dbds$diag_1 <= 739] <- "Musculoskeletal"
+dbds$diagnosis_1[dbds$diag_1>=580 & dbds$diag_1 <= 629 | dbds$diag_1==788] <- "Genitourinary"
+dbds$diagnosis_1[dbds$diag_1>=140 & dbds$diag_1 <= 239 | dbds$diag_1>=790 & 
+                        dbds$diag_1 <= 799 | dbds$diag_1==780 | dbds$diag_1>=240 & dbds$diag_1 < 250 |
+                        dbds$diag_1>=251 & dbds$diag_1 <= 279 | dbds$diag_1>=680 & dbds$diag_1 <= 709 |
+                        dbds$diag_1>=001 & dbds$diag_1 <= 139 | dbds$diag_1==781 |
+                        dbds$diag_1==782 | dbds$diag_1==784] <- "Neoplasms"
+dbds <- dbds %>% select(- matches("diag_1"))
+dbds %>% group_by(diagnosis_1) %>% count() 
+dbds$diagnosis_1[is.na(dbds$diagnosis_1)] <- "Neoplasms"
+
+#diagnosis_2
+dbds$diagnosis_2 <- factor( rep("other",nrow(dbds)),ordered = F, 
+                             levels = c("Circulatory","Respiratory","Digestive","Diabetes","Injury",
+                                        "Musculoskeletal","Genitourinary","Neoplasms","Other"))
+dbds$diagnosis_2[dbds$diag_2>=390 & dbds$diag_2 <= 459 | dbds$diag_2==785] <- "Circulatory"
+dbds$diagnosis_2[dbds$diag_2>=460 & dbds$diag_2 <= 519 | dbds$diag_2==786] <- "Respiratory"
+dbds$diagnosis_2[dbds$diag_2>=520 & dbds$diag_2 <= 579 | dbds$diag_2==787] <- "Digestive"
+dbds$diagnosis_2[dbds$diag_2>=250 & dbds$diag_2 < 251] <- "Diabetes"
+dbds$diagnosis_2[dbds$diag_2>800 & dbds$diag_2 <= 999] <- "Injury"
+dbds$diagnosis_2[dbds$diag_2>=710 & dbds$diag_2 <= 739] <- "Musculoskeletal"
+dbds$diagnosis_2[dbds$diag_2>=580 & dbds$diag_2 <= 629 | dbds$diag_2==788] <- "Genitourinary"
+dbds$diagnosis_2[dbds$diag_2>=140 & dbds$diag_2 <= 239 | dbds$diag_2>=790 & 
+                    dbds$diag_2 <= 799 | dbds$diag_2==780 | dbds$diag_2>=240 & dbds$diag_2 < 250 |
+                    dbds$diag_2>=251 & dbds$diag_2 <= 279 | dbds$diag_2>=680 & dbds$diag_2 <= 709 |
+                    dbds$diag_2>=001 & dbds$diag_2 <= 139 | dbds$diag_2==781 |
+                    dbds$diag_2==782 | dbds$diag_2==784] <- "Neoplasms"
+dbds <- dbds %>% select(- matches("diag_2"))
+dbds %>% group_by(diagnosis_2) %>% count() 
+dbds$diagnosis_2[is.na(dbds$diagnosis_2)] <- "Neoplasms"
+
+#diagnosis_3
+dbds$diagnosis_3 <- factor( rep("other",nrow(dbds)),ordered = F, 
+                             levels = c("Circulatory","Respiratory","Digestive","Diabetes","Injury",
+                                        "Musculoskeletal","Genitourinary","Neoplasms","Other"))
+dbds$diagnosis_3[dbds$diag_3>=390 & dbds$diag_3 <= 459 | dbds$diag_3==785] <- "Circulatory"
+dbds$diagnosis_3[dbds$diag_3>=460 & dbds$diag_3 <= 519 | dbds$diag_3==786] <- "Respiratory"
+dbds$diagnosis_3[dbds$diag_3>=520 & dbds$diag_3 <= 579 | dbds$diag_3==787] <- "Digestive"
+dbds$diagnosis_3[dbds$diag_3>=250 & dbds$diag_3 < 251] <- "Diabetes"
+dbds$diagnosis_3[dbds$diag_3>800 & dbds$diag_3 <= 999] <- "Injury"
+dbds$diagnosis_3[dbds$diag_3>=710 & dbds$diag_3 <= 739] <- "Musculoskeletal"
+dbds$diagnosis_3[dbds$diag_3>=580 & dbds$diag_3 <= 629 | dbds$diag_3==788] <- "Genitourinary"
+dbds$diagnosis_3[dbds$diag_3>=140 & dbds$diag_3 <= 239 | dbds$diag_3>=790 & 
+                    dbds$diag_3 <= 799 | dbds$diag_3==780 | dbds$diag_3>=240 & dbds$diag_3 < 250 |
+                    dbds$diag_3>=251 & dbds$diag_3 <= 279 | dbds$diag_3>=680 & dbds$diag_3 <= 709 |
+                    dbds$diag_3>=001 & dbds$diag_3 <= 139 | dbds$diag_3==781 |
+                    dbds$diag_3==782 | dbds$diag_3==784] <- "Neoplasms"
+dbds <- dbds %>% select(- matches("diag_3"))
+dbds %>% group_by(diagnosis_3) %>% count() 
+dbds$diagnosis_3[is.na(dbds$diagnosis_3)] <- "Neoplasms"
+
+#admission_source
+dbds$admission_source <- factor( rep("Other",nrow(dbds)),ordered = F, 
+                                  levels = c("Physician", "Clinic", "HMO", "Hospital Transfer", "Skilled Nursing Facility", 
+                                  "Other Health Care Facility", "Emergency Room","Other"))
+dbds$admission_source[dbds$admission_source_id==1]<- "Physician"
+dbds$admission_source[dbds$admission_source_id==2]<- "Clinic"
+dbds$admission_source[dbds$admission_source_id==3]<- "HMO"
+dbds$admission_source[dbds$admission_source_id==4]<- "Hospital Transfer"
+dbds$admission_source[dbds$admission_source_id==5]<- "Skilled Nursing Facility"
+dbds$admission_source[dbds$admission_source_id==6]<- "Other Health Care Facility"
+dbds$admission_source[dbds$admission_source_id==7]<- "Emergency Room"
+dbds %>% group_by(admission_source) %>% count() 
+dbds <- dbds %>% select(- matches("admission_source_id"))
+
+#admission type
+dbds$admission_type2 <- factor( rep("Other",nrow(dbds)),ordered = F, 
+                                 levels = c("Emergency", "Urgent", "Elective", "Newborn", "Unkown", "Trauma Center", "Other"))
+dbds$admission_type2[dbds$admission_type_id==1]<- "Emergency"
+dbds$admission_type2[dbds$admission_type_id==2]<- "Urgent"
+dbds$admission_type2[dbds$admission_type_id==3]<- "Elective"
+dbds$admission_type2[dbds$admission_type_id==4]<- "Newborn"
+dbds$admission_type2[dbds$admission_type_id==5]<- "Unkown"
+dbds$admission_type2[dbds$admission_type_id==6]<- "Trauma Center"
+dbds %>% group_by(admission_type2) %>% count() 
+dbds <- dbds %>% select(- matches("admission_type_id"))
+
+# discharged_to
+dbds$discharged_to <- factor( rep("Other",nrow(dbds)),ordered = F, 
+                               levels = c("Home", "Hospice", "Back to Hospital", "Left Against Medical Advice", "Nurse",
+                                          "Outpatient", "Mental Health", "Other"))
+dbds$discharged_to[dbds$discharge_disposition_id==1]<- "Home"
+dbds$discharged_to[dbds$discharge_disposition_id==2]<- "Hospice"
+dbds$discharged_to[dbds$discharge_disposition_id==3]<- "Back to Hospital"
+dbds$discharged_to[dbds$discharge_disposition_id==4]<- "Left Against Medical Advice"
+dbds$discharged_to[dbds$discharge_disposition_id==5]<- "Nurse"
+dbds$discharged_to[dbds$discharge_disposition_id==6]<- "Outpatient"
+dbds$discharged_to[dbds$discharge_disposition_id==7]<- "Mental Health"
+dbds <- dbds %>% select(- matches("discharge_disposition_id"))
+
+#Output variable - Recode readmitted for binary classification
+#No:0, (<30, >30): 1
+dbds$readmitted <- ifelse(dbds$readmitted=="NO", 0,
+                          ifelse(dbds$readmitted=="<30" |dbds$readmitted==">30", 1, NA))
+dbds %>% group_by(readmitted) %>% count()
+
+# DESCRIPTIVE ANALYSIS ----------------------------------------------------
+
+#On overall data
+length(dbds) #50 variables, 27 after cleaning
+count(dbds) #101766 observations
+
+dbds %>% group_by(race) %>% count()
+ggplot(dbds) + geom_bar(aes(x = race, fill=race))
+
+dbds %>% group_by(gender) %>% count()
+ggplot(dbds) + geom_bar(aes(x = gender, fill=gender))
+
+dbds %>% group_by(age) %>% count()
+ggplot(dbds) + geom_bar(aes(x = age, fill=age))
+
+dbds %>% group_by(time_in_hospital) %>% count()
+median(dbds$time_in_hospital)
+
+View(dbds %>% group_by(medical_specialty) %>% count())      
+ggplot(dbds) + geom_bar(aes(x = medical_specialty))
+
+dbds %>% group_by(number_diagnoses) %>% count() 
+median(dbds$number_diagnoses)
+
+dbds %>% group_by(A1Cresult) %>% count()  
+ggplot(dbds) + geom_bar(aes(x = A1Cresult))
+
+dbds %>% group_by(diabetesMed) %>% count()  
+ggplot(dbds) + geom_bar(aes(x = diabetesMed, fill=diabetesMed))
+
+dbds %>% group_by(readmitted) %>% count() 
+ggplot(dbds) + geom_bar(aes(x = readmitted, fill=readmitted))
+
+#On readmitted data
+readmitted_patients <- dbds[dbds$readmitted == "1",]
+count(readmitted_patients) #46902 observations
+
+readmitted_patients %>% group_by(race) %>% count()
+ggplot(readmitted_patients) + geom_bar(aes(x = race))
+
+readmitted_patients %>% group_by(gender) %>% count()
+ggplot(readmitted_patients) + geom_bar(aes(x = gender))
+
+View(readmitted_patients %>% group_by(age) %>% count())
+ggplot(readmitted_patients) + geom_bar(aes(x = age))
+
+readmitted_patients %>% group_by(time_in_hospital) %>% count()
+median(readmitted_patients$time_in_hospital)
+
+View(readmitted_patients %>% group_by(medical_specialty) %>% count())      
+ggplot(readmitted_patients) + geom_bar(aes(x = medical_specialty))
+
+readmitted_patients %>% group_by(number_diagnoses) %>% count() 
+median(readmitted_patients$number_diagnoses)
+
+readmitted_patients %>% group_by(A1Cresult) %>% count()  
+ggplot(readmitted_patients) + geom_bar(aes(x = A1Cresult))
+
+readmitted_patients %>% group_by(insulin) %>% count()  
+ggplot(readmitted_patients) + geom_bar(aes(x = insulin))
+
+readmitted_patients %>% group_by(diabetesMed) %>% count()  
+ggplot(readmitted_patients) + geom_bar(aes(x = diabetesMed))
